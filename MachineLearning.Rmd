@@ -1,0 +1,230 @@
+---
+title: "Machine Learning Project"
+output: html_document
+---
+
+###Practical Machine Learning
+
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Data
+
+The training data for this project are available here: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv]
+
+The test data are available here: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv]
+
+The data for this project come from this source: [http://groupware.les.inf.puc-rio.br/har]. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+##What you should submit
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-). You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details.
+
+##Preliminary Work
+
+#Reproduceability
+
+An overall pseudo-random number generator seed was set at 123. The same seed should be used in order to reproduce the results.
+
+#The Model
+
+Our outcome variable is classe, a factor variable with 5 levels. For this data set, "participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in 5 different fashions:
+
+Class A: Exactly according to the specification
+
+Class B: Throwing the elbows to the front
+
+Class C: Lifting the dumbbell only halfway
+
+Class D: Lowering the dumbbell only halfway
+
+Class E: Throwing the hips to the front
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Prediction evaluations will be based on maximizing the accuracy and minimizing the out-of-sample error. All other available variables after cleaning will be used for prediction. Two models will be tested using decision tree and random forest algorithms. The model with the highest accuracy will be chosen as our final model.
+
+#Cross-validation
+
+Cross-validation will be performed by subsampling our training data set randomly without replacement into two subsamples with 75% for training and 25% for testing. Once we choose the most accurate model, it will be tested on the original Testing data set.
+
+#Expected out-of-sample error
+
+The expected out-of-sample error will be the out-of-sample error achieved in the sub-testing data set and expected accuracy is the achieved accuracy in the sub-testing data set. Our outcome variable "classe" is an unordered factor variable. Thus, we can choose our error type as 1-accuracy. We have a large sample size with N= 19622 in the Training data set. This allow us to divide our Training sample into subTraining and subTesting to allow cross-validation. Features with all missing values will be discarded as well as features that are irrelevant. All other features will be kept as relevant variables. Decision tree and random forest algorithms will be used to  detect the variables that are important for classification.
+
+#Libraries
+
+The following libraries will be loaded for use in our analysis:
+
+```{r, echo=TRUE}
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+
+```
+
+# Set Seed
+
+```{r, echo=TRUE}
+set.seed(123)
+```
+
+##Getting the Data
+
+The training data set can be found on the following URL:
+
+```{r, echo=TRUE}
+trainingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+```
+
+The testing data set can be found on the following URL:
+
+```{R, echo=TRUE}
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+Then, we load data to memory:
+
+```{r, echo=TRUE}
+training <- read.csv(url(trainingUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+
+##Create Sub-Testing and Sub-Training Data Sets
+
+Partioning Training data set into two data sets, 75% for subTraining, 25% for subTesting:
+
+```{r, echo=TRUE}
+Train <- createDataPartition(y=training$classe, p=0.75, list=FALSE)
+subTraining <- training[Train, ]
+subTesting <- training[-Train, ]
+dim(subTraining)
+dim(subTesting)
+```
+
+##Cleaning the data
+
+The following transformations were used to clean the data:
+
+1 - Identify near-zero variance variables:
+
+Run this code to view possible NZV Variables:
+
+```{r, echo=TRUE}
+VarNZV <- nearZeroVar(subTraining, saveMetrics=TRUE)
+VariablesNZV <-row.names.data.frame(subset.data.frame(VarNZV,VarNZV$nzv=="TRUE"))
+print(VariablesNZV)
+```
+
+Remove near-zero variance variables from subTraining data set:
+
+```{r, echo=TRUE}
+NZVvars <- names(subTraining) %in% VariablesNZV
+subTraining <- subTraining[!NZVvars]
+dim(subTraining)
+```
+
+2 - Removing ID variable so that it does not interfer with ML Algorithms:
+
+```{r, echo=TRUE}
+subTraining <- subTraining[c(-1)]
+dim(subTraining)
+```
+
+3 - Remove variables that are mostly NA. We will discard variables that are >60% NA:
+
+```{r, echo=TRUE}
+subTraining2 <- subTraining #creating another subset to iterate in loop
+for(i in 1:length(subTraining)) { #for every column in the training dataset
+        if( sum( is.na( subTraining[, i] ) ) /nrow(subTraining) >= .6 ) { #if NAs > 60%
+        for(j in 1:length(subTraining2)) {
+            if( length( grep(names(subTraining[i]), names(subTraining2)[j]) ) ==1)  { #if the columns are the same:
+                subTraining2 <- subTraining2[ , -j] #Remove the variable
+            }   
+        } 
+    }
+}
+
+dim(subTraining2)
+```
+
+With the mostly NA variables removed from our temporary subTraining set, we can update the working subTraining set:
+
+```{r, echo=TRUE}
+subTraining <- subTraining2
+```
+
+
+Now we perform exact same transformations for subTesting and Testing data sets..
+
+```{r, echo=TRUE}
+cleanData <- colnames(subTraining)
+cleanData2 <- colnames(subTraining[, -58]) #with classe column removed
+subTesting <- subTesting[cleanData]
+testing <- testing[cleanData2]
+```
+
+and check the new number of observations:
+
+```{r, echo=TRUE}
+dim(subTesting)
+dim(testing)
+```
+
+In order to ensure proper functioning of Decision Trees and especially RandomForest Algorithm with the Test data set (data set provided), we need to coerce the data into the same type:
+
+```{r, echo=TRUE}
+for (i in 1:length(testing) ) {
+        for(j in 1:length(subTraining)) {
+        if( length( grep(names(subTraining[i]), names(testing)[j]) ) ==1)  {
+            class(testing[j]) <- class(subTraining[i])
+        }      
+    }      
+}
+```
+
+##Prediction With Decision Tree
+
+```{r, echo=TRUE}
+DecisionTree <- rpart(classe ~ ., data=subTraining, method="class")
+fancyRpartPlot(DecisionTree)
+```
+
+#Decision Tree Prediction
+
+```{r, echo=TRUE}
+predictionsDT <- predict(DecisionTree, subTesting, type = "class")
+```
+
+To view results:
+
+```{r, echo=TRUE}
+confusionMatrix(predictionsDT, subTesting$classe)
+```
+
+##Predicting with Random Forest
+
+```{r, ECHO=TRUE}
+RandomForest <- randomForest(classe ~. , data=subTraining)
+```
+
+#Random Forest Prediction
+
+```{r, echo=TRUE}
+predictionsRF <- predict(RandomForest, subTesting, type = "class")
+```
+
+To view results:
+
+```{r, echo=TRUE}
+confusionMatrix(predictionsRF, subTesting$classe)
+```
+
+We can see that random forest was significantly more accurate.
+
+
+
